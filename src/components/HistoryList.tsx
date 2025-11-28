@@ -55,8 +55,23 @@ interface Props {
 }
 
 const HistoryList: React.FC<Props> = ({ height, onEntryClick }) => {
-  const { entries, selectedIndex, hoveredIndex, query, moveSelection, setHovered } = useClipboardStore();
+  const { entries, selectedIndex, hoveredIndex, query, moveSelection, setHovered, copyEntry, deleteEntry } = useClipboardStore();
   const parentRef = useRef<HTMLDivElement>(null);
+  const [openActionId, setOpenActionId] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    if (openActionId === null) return;
+    const handleClickAway = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const inMenu = target.closest('[data-action-menu="true"]');
+      const inTrigger = target.closest('[data-action-trigger="true"]');
+      if (inMenu || inTrigger) return;
+      setOpenActionId(null);
+    };
+    window.addEventListener('mousedown', handleClickAway);
+    return () => window.removeEventListener('mousedown', handleClickAway);
+  }, [openActionId]);
 
   const rows = useMemo(() => {
     const result: Row[] = [];
@@ -90,6 +105,7 @@ const HistoryList: React.FC<Props> = ({ height, onEntryClick }) => {
   return (
     <div
       ref={parentRef}
+      onScroll={() => setOpenActionId(null)}
       style={{
         height,
         overflow: 'auto',
@@ -134,8 +150,25 @@ const HistoryList: React.FC<Props> = ({ height, onEntryClick }) => {
           const isActive = entryIndex === selectedIndex;
           const isHover = entryIndex === hoveredIndex;
           const handleClick = () => {
+            setOpenActionId(null);
             moveSelection(entryIndex - selectedIndex);
             onEntryClick?.(entry, entryIndex);
+          };
+          const handlePreview = (e?: React.MouseEvent) => {
+            e?.stopPropagation();
+            moveSelection(entryIndex - selectedIndex);
+            onEntryClick?.(entry, entryIndex);
+            setOpenActionId(null);
+          };
+          const handleCopy = async (e: React.MouseEvent) => {
+            e.stopPropagation();
+            await copyEntry(entry.id);
+            setOpenActionId(null);
+          };
+          const handleDelete = async (e: React.MouseEvent) => {
+            e.stopPropagation();
+            await deleteEntry(entry.id);
+            setOpenActionId(null);
           };
           return (
             <div
@@ -179,6 +212,9 @@ const HistoryList: React.FC<Props> = ({ height, onEntryClick }) => {
                   cursor: 'pointer',
                   transition: 'transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease',
                   transform: isHover ? 'translateY(-1px)' : 'none',
+                  position: 'relative',
+                  zIndex: openActionId === entry.id ? 3 : 1,
+                  overflow: 'visible',
                 }}
               >
                 <div
@@ -217,7 +253,94 @@ const HistoryList: React.FC<Props> = ({ height, onEntryClick }) => {
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   {entry.is_pinned && <span style={{ color: 'var(--accent)' }}>📌</span>}
+                  <button
+                    type="button"
+                    aria-label="更多操作"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenActionId((prev) => (prev === entry.id ? null : entry.id));
+                    }}
+                    data-action-trigger="true"
+                    style={{
+                      width: 28,
+                      height: 28,
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: '#fff',
+                      cursor: 'pointer',
+                      color: '#6b7280',
+                      display: 'grid',
+                      placeItems: 'center',
+                      fontWeight: 700,
+                      lineHeight: 1,
+                    }}
+                  >
+                    ⋯
+                  </button>
                 </div>
+                {openActionId === entry.id && (
+                  <div
+                    data-action-menu="true"
+                    style={{
+                      position: 'absolute',
+                      top: 10,
+                      right: 10,
+                      background: '#fff',
+                      border: '1px solid var(--border)',
+                      borderRadius: 10,
+                      boxShadow: '0 10px 30px rgba(15,23,42,0.12)',
+                      padding: '8px',
+                      minWidth: 140,
+                      zIndex: 10,
+                      display: 'grid',
+                      gap: 6,
+                    }}
+                  >
+                    <button
+                      type="button"
+                      onClick={handlePreview}
+                      style={{
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        border: '1px solid transparent',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      预览
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      style={{
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        border: '1px solid transparent',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      复制
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      style={{
+                        textAlign: 'left',
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        border: '1px solid transparent',
+                        background: 'transparent',
+                        color: '#dc2626',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      删除
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           );

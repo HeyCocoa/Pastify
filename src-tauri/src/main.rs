@@ -743,6 +743,61 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
     Ok(())
 }
 
+#[tauri::command]
+fn copy_entry(state: State<AppState>, id: i64) -> Result<(), String> {
+    let conn = Connection::open(&state.db_path).map_err(|e| e.to_string())?;
+    let item: ClipboardItem = conn
+        .query_row(
+            "SELECT id, content_type, text_content, image_data, source_app, source_path, source_icon, created_at, is_pinned, usage_count FROM clipboard_items WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(ClipboardItem {
+                    id: row.get(0)?,
+                    content_type: row.get(1)?,
+                    text_content: row.get(2)?,
+                    image_data: row.get(3)?,
+                    source_app: row.get(4)?,
+                    source_path: row.get(5)?,
+                    source_icon: row.get(6)?,
+                    created_at: row.get(7)?,
+                    is_pinned: row.get::<_, i32>(8)? != 0,
+                    usage_count: row.get(9)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?;
+
+    let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64;
+    // Avoid duplicating the same item into history when we set clipboard ourselves
+    SKIP_UNTIL_MS.store(now_ms + 1200, Ordering::SeqCst);
+
+    if item.content_type == "text" {
+        let text = item.text_content.unwrap_or_default();
+        clipboard.set_text(text).map_err(|e| e.to_string())?;
+    } else if let Some(img_bytes) = item.image_data {
+        let png = image::load_from_memory(&img_bytes).map_err(|e| e.to_string())?;
+        let rgba = png.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        let img_data = arboard::ImageData {
+            width: w as usize,
+            height: h as usize,
+            bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+        };
+        clipboard.set_image(img_data).map_err(|e| e.to_string())?;
+    }
+
+    conn.execute(
+        "UPDATE clipboard_items SET usage_count = usage_count + 1 WHERE id = ?1",
+        params![id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 unsafe fn simulate_paste() -> Result<(), AppError> {
     let inputs = [
         INPUT {
@@ -895,6 +950,7 @@ fn main() {
             delete_entry,
             toggle_pin,
             paste_entry,
+            copy_entry,
             get_settings,
             update_settings
         ])

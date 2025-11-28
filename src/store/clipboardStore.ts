@@ -23,6 +23,8 @@ interface State {
   setSourceFilter: (s?: string) => void;
   moveSelection: (delta: number) => void;
   setHovered: (idx?: number) => void;
+  copyEntry: (id: number) => Promise<void>;
+  deleteEntry: (id: number) => Promise<void>;
   deleteSelected: () => Promise<void>;
   pasteSelected: (plain: boolean) => Promise<void>;
   togglePin: () => Promise<void>;
@@ -93,6 +95,30 @@ export const useClipboardStore = create<State>((set, get) => ({
     if (!entries.length) return;
     const next = Math.min(entries.length - 1, Math.max(0, selectedIndex + delta));
     set({ selectedIndex: next, hoveredIndex: undefined });
+  },
+  async copyEntry(id) {
+    const { entries, fetchHistory } = get();
+    const prevIndex = entries.findIndex((e) => e.id === id);
+    await invoke('copy_entry', { id });
+    await fetchHistory();
+    const fresh = get().entries;
+    const newIndex = fresh.findIndex((e) => e.id === id);
+    if (newIndex >= 0) {
+      set({ selectedIndex: newIndex, hoveredIndex: undefined });
+    } else if (prevIndex >= 0 && fresh.length) {
+      const fallback = Math.min(fresh.length - 1, prevIndex);
+      set({ selectedIndex: fallback, hoveredIndex: undefined });
+    }
+  },
+  async deleteEntry(id) {
+    const { entries, fetchHistory } = get();
+    const prevIndex = entries.findIndex((e) => e.id === id);
+    await invoke('delete_entry', { id });
+    await fetchHistory();
+    const fresh = get().entries;
+    if (!fresh.length) return;
+    const nextIndex = Math.min(fresh.length - 1, Math.max(0, prevIndex));
+    set({ selectedIndex: nextIndex, hoveredIndex: undefined });
   },
   async deleteSelected() {
     const { entries, selectedIndex, fetchHistory } = get();
