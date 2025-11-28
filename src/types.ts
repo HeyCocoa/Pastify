@@ -7,6 +7,7 @@ export interface ClipboardEntry {
   image_thumb?: string; // base64 preview
   created_at: number; // unix ms
   source_app?: string;
+  source_icon?: string; // data url of app icon
   is_pinned: boolean;
   usage_count: number;
 }

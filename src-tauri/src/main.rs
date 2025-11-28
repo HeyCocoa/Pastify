@@ -1,13 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{ffi::c_void, os::windows::ffi::OsStrExt, path::{Path, PathBuf}, sync::Arc, thread, time::Duration};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arboard::Clipboard;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use chrono::{Duration as ChronoDuration, Local};
+use chrono::{Duration as ChronoDuration, Local, TimeZone};
 use image::{ImageBuffer, Rgba};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
@@ -21,7 +21,14 @@ use std::io::Cursor;
 use thiserror::Error;
 use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, KEYBD_EVENT_FLAGS, VK_CONTROL, VK_V};
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, GetWindowTextW, GetWindowTextLengthW, HICON, ICONINFO};
+use windows::Win32::Foundation::CloseHandle;
+use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_FORMAT, QueryFullProcessImageNameW};
+use windows::Win32::UI::Shell::{SHGetFileInfoW, SHGFI_DISPLAYNAME, SHGFI_ICON, SHGFI_LARGEICON, SHFILEINFOW};
+use windows::Win32::Graphics::Gdi::{GetObjectW, BITMAP, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, GetDIBits, DIB_RGB_COLORS, GetDC, ReleaseDC, DeleteObject, HBITMAP};
+use windows::Win32::UI::WindowsAndMessaging::{GetIconInfo, DestroyIcon};
+use windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES;
+use windows::core::{PWSTR, PCWSTR};
 
 static SETTINGS_DEFAULT: Lazy<Settings> = Lazy::new(|| Settings {
     max_history: 1000,
@@ -51,6 +58,8 @@ struct ClipboardItem {
     text_content: Option<String>,
     image_data: Option<Vec<u8>>, // png bytes
     source_app: Option<String>,
+    source_path: Option<String>,
+    source_icon: Option<Vec<u8>>, // png bytes
     created_at: i64,
     is_pinned: bool,
     usage_count: i64,
@@ -63,6 +72,7 @@ pub struct ClipboardDto {
     text_content: Option<String>,
     image_thumb: Option<String>,
     source_app: Option<String>,
+    source_icon: Option<String>,
     created_at: i64,
     is_pinned: bool,
     usage_count: i64,
@@ -81,6 +91,13 @@ pub struct Settings {
 struct AppState {
     db_path: PathBuf,
     settings: Arc<Mutex<Settings>>,
+}
+
+#[derive(Clone, Debug)]
+struct ProcessInfo {
+    display: String,
+    path: String,
+    icon_png: Option<Vec<u8>>,
 }
 
 fn init_logger() {
@@ -102,6 +119,8 @@ fn ensure_db(db_path: &PathBuf) -> Result<(), AppError> {
             text_content TEXT,
             image_data BLOB,
             source_app TEXT,
+            source_path TEXT,
+            source_icon BLOB,
             created_at INTEGER NOT NULL,
             is_pinned INTEGER DEFAULT 0,
             usage_count INTEGER DEFAULT 0
@@ -112,6 +131,8 @@ fn ensure_db(db_path: &PathBuf) -> Result<(), AppError> {
             value TEXT NOT NULL
         );",
     )?;
+
+    ensure_schema_updates(&conn)?;
 
     let settings_json: Option<String> = conn
         .query_row("SELECT value FROM settings WHERE key = 'app'", [], |row| row.get(0))
@@ -158,7 +179,212 @@ fn enforce_limit(db_path: &PathBuf, max: i64) -> Result<(), AppError> {
     Ok(())
 }
 
-fn foreground_process_name() -> Option<String> {
+fn ensure_schema_updates(conn: &Connection) -> Result<(), AppError> {
+    let mut has_path = false;
+    let mut has_icon = false;
+    let mut stmt = conn.prepare("PRAGMA table_info(clipboard_items)")?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        match name.as_str() {
+            "source_path" => has_path = true,
+            "source_icon" => has_icon = true,
+            _ => {}
+        }
+    }
+    if !has_path {
+        conn.execute("ALTER TABLE clipboard_items ADD COLUMN source_path TEXT", [])?;
+    }
+    if !has_icon {
+        conn.execute("ALTER TABLE clipboard_items ADD COLUMN source_icon BLOB", [])?;
+    }
+    Ok(())
+}
+
+fn build_process_info(path: &str) -> ProcessInfo {
+    let base = Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("?");
+    let friendly_raw = friendly_name_from_path(path);
+    let friendly = normalize_display_name(&friendly_raw);
+    let display = if friendly.trim().is_empty() {
+        map_known_app_name(base)
+    } else if friendly.eq_ignore_ascii_case(base) {
+        map_known_app_name(base)
+    } else {
+        friendly
+    };
+    let icon_png = extract_icon_png(path);
+    ProcessInfo {
+        display,
+        path: path.to_string(),
+        icon_png,
+    }
+}
+
+fn window_title(hwnd: windows::Win32::Foundation::HWND) -> Option<String> {
+    unsafe {
+        let len = GetWindowTextLengthW(hwnd);
+        if len == 0 {
+            return None;
+        }
+        let mut buf = vec![0u16; (len + 1) as usize];
+        let written = GetWindowTextW(hwnd, &mut buf);
+        if written == 0 {
+            return None;
+        }
+        buf.truncate(written as usize);
+        Some(String::from_utf16_lossy(&buf))
+    }
+}
+
+fn friendly_name_from_path(path: &str) -> String {
+    let wide: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut sfi = SHFILEINFOW::default();
+    unsafe {
+        let _ = SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut sfi as *mut _),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_DISPLAYNAME,
+        );
+        let name_u16 = sfi.szDisplayName;
+        let nul = name_u16.iter().position(|&c| c == 0).unwrap_or(name_u16.len());
+        String::from_utf16_lossy(&name_u16[..nul])
+    }
+}
+
+fn normalize_display_name(name: &str) -> String {
+    let mut n = name.trim().to_string();
+    if n.to_lowercase().ends_with(".exe") {
+        n.truncate(n.len() - 4);
+    }
+    // simple title-case: first letter upper, rest as-is to avoid locale issues
+    if let Some(first) = n.get(0..1) {
+        n = format!("{}{}", first.to_uppercase(), n.get(1..).unwrap_or(""));
+    }
+    n
+}
+
+fn map_known_app_name(base: &str) -> String {
+    let lower = base.to_lowercase();
+    let mapped = match lower.as_str() {
+        "msedge" | "edge" => "Microsoft Edge",
+        "code" | "vscode" | "codehelper" => "VS Code",
+        "weixin" | "wechat" => "WeChat",
+        "wechatweb" => "WeChat",
+        "notepad" => "Notepad",
+        "chrome" => "Google Chrome",
+        "firefox" => "Firefox",
+        "explorer" => "File Explorer",
+        _ => return normalize_display_name(base),
+    };
+    mapped.to_string()
+}
+
+fn extract_icon_png(path: &str) -> Option<Vec<u8>> {
+    let wide: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut sfi = SHFILEINFOW::default();
+    unsafe {
+        let res = SHGetFileInfoW(
+            PCWSTR(wide.as_ptr()),
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut sfi as *mut _),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_LARGEICON,
+        );
+        if res == 0 || sfi.hIcon.0 == 0 {
+            return None;
+        }
+        let icon = sfi.hIcon;
+        let png = hicon_to_png(icon);
+        let _ = DestroyIcon(icon);
+        png
+    }
+}
+
+fn hicon_to_png(icon: HICON) -> Option<Vec<u8>> {
+    unsafe {
+        let mut info = ICONINFO::default();
+        if let Err(_) = GetIconInfo(icon, &mut info) {
+            return None;
+        }
+
+        let color: HBITMAP = info.hbmColor;
+        let mask: HBITMAP = info.hbmMask;
+        let mut bmp = BITMAP::default();
+        if GetObjectW(color, std::mem::size_of::<BITMAP>() as i32, Some(&mut bmp as *mut _ as *mut c_void)) == 0 {
+            let _ = DeleteObject(color);
+            let _ = DeleteObject(mask);
+            return None;
+        }
+
+        let width = bmp.bmWidth;
+        let height = bmp.bmHeight;
+        if width == 0 || height == 0 {
+            let _ = DeleteObject(color);
+            let _ = DeleteObject(mask);
+            return None;
+        }
+
+        let hdc = GetDC(None);
+        let mut bi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0 as u32,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [Default::default(); 1],
+        };
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let res = GetDIBits(
+            hdc,
+            color,
+            0,
+            height as u32,
+            Some(pixels.as_mut_ptr() as *mut c_void),
+            &mut bi,
+            DIB_RGB_COLORS,
+        );
+        let _ = ReleaseDC(None, hdc);
+        let _ = DeleteObject(color);
+        let _ = DeleteObject(mask);
+        if res == 0 {
+            return None;
+        }
+
+        // GetDIBits returns BGRA; swap B/R to RGBA for image crate
+        for px in pixels.chunks_exact_mut(4) {
+            px.swap(0, 2);
+        }
+
+        let img = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width as u32, height as u32, pixels)?;
+        let mut cursor = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut cursor, image::ImageOutputFormat::Png)
+            .ok()?;
+        Some(cursor.into_inner())
+    }
+}
+
+fn process_info_from_foreground() -> Option<ProcessInfo> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.0 == 0 {
@@ -170,17 +396,46 @@ fn foreground_process_name() -> Option<String> {
         if pid == 0 {
             return None;
         }
-        // To reduce Windows API surface issues, skip resolving exe path here.
-        // Future improvement: use psapi::GetModuleBaseNameW or QueryFullProcessImageNameW with proper bindings.
-        None
+        let handle = match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            Ok(h) => h,
+            Err(_) => return None,
+        };
+
+        let mut buf = [0u16; 260];
+        let mut len = buf.len() as u32;
+        let result = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = CloseHandle(handle);
+        if result.is_err() || len == 0 {
+            return None;
+        }
+
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        if path.is_empty() {
+            return None;
+        }
+
+        let title = window_title(hwnd);
+        let mut info = build_process_info(&path);
+        if let Some(t) = title {
+            // combine window title with app name for more context (e.g., webpage title)
+            if !t.trim().is_empty() && t != info.display {
+                info.display = format!("{} ({})", t, info.display);
+            }
+        }
+        Some(info)
     }
 }
 
 fn read_clipboard(db_path: &PathBuf, state: &AppState) -> Result<Option<ClipboardDto>, AppError> {
     let settings = state.settings.lock().clone();
-    let source_app = foreground_process_name();
-    if let Some(app) = &source_app {
-        if settings.blacklist.iter().any(|b| b.eq_ignore_ascii_case(app)) {
+    let proc_info = process_info_from_foreground();
+    if let Some(app) = &proc_info {
+        if settings.blacklist.iter().any(|b| b.eq_ignore_ascii_case(&app.display)) {
             return Ok(None);
         }
     }
@@ -196,7 +451,9 @@ fn read_clipboard(db_path: &PathBuf, state: &AppState) -> Result<Option<Clipboar
             content_type: "text".into(),
             text_content: Some(text.clone()),
             image_data: None,
-            source_app,
+            source_app: proc_info.as_ref().map(|p| p.display.clone()),
+            source_path: proc_info.as_ref().map(|p| p.path.clone()),
+            source_icon: proc_info.and_then(|p| p.icon_png),
             created_at: chrono::Utc::now().timestamp_millis(),
             is_pinned: false,
             usage_count: 0,
@@ -227,13 +484,15 @@ fn read_clipboard(db_path: &PathBuf, state: &AppState) -> Result<Option<Clipboar
             let item = ClipboardItem {
                 id: 0,
                 content_type: "image".into(),
-                text_content: None,
-                image_data: Some(png_bytes),
-                source_app,
-                created_at: chrono::Utc::now().timestamp_millis(),
-                is_pinned: false,
-                usage_count: 0,
-            };
+            text_content: None,
+            image_data: Some(png_bytes),
+            source_app: proc_info.as_ref().map(|p| p.display.clone()),
+            source_path: proc_info.as_ref().map(|p| p.path.clone()),
+            source_icon: proc_info.and_then(|p| p.icon_png),
+            created_at: chrono::Utc::now().timestamp_millis(),
+            is_pinned: false,
+            usage_count: 0,
+        };
             if !is_duplicate(db_path, &item)? {
                 let saved = insert_item(db_path, item, settings.max_history)?;
                 return Ok(Some(saved));
@@ -248,13 +507,15 @@ fn read_clipboard(db_path: &PathBuf, state: &AppState) -> Result<Option<Clipboar
 fn insert_item(db_path: &PathBuf, mut item: ClipboardItem, max: i64) -> Result<ClipboardDto, AppError> {
     let conn = Connection::open(db_path)?;
     conn.execute(
-        "INSERT INTO clipboard_items (content_type, text_content, image_data, source_app, created_at, is_pinned, usage_count)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
+        "INSERT INTO clipboard_items (content_type, text_content, image_data, source_app, source_path, source_icon, created_at, is_pinned, usage_count)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)",
         params![
             item.content_type,
             item.text_content,
             item.image_data,
             item.source_app,
+            item.source_path,
+            item.source_icon,
             item.created_at,
             item.is_pinned as i32
         ],
@@ -286,13 +547,21 @@ fn is_duplicate(db_path: &PathBuf, item: &ClipboardItem) -> Result<bool, AppErro
 }
 
 fn to_dto(item: ClipboardItem) -> ClipboardDto {
-    let image_thumb = item.image_data.as_ref().map(|bytes| format!("data:image/png;base64,{}", BASE64.encode(bytes)));
+    let image_thumb = item
+        .image_data
+        .as_ref()
+        .map(|bytes| format!("data:image/png;base64,{}", BASE64.encode(bytes)));
+    let source_icon = item
+        .source_icon
+        .as_ref()
+        .map(|bytes| format!("data:image/png;base64,{}", BASE64.encode(bytes)));
     ClipboardDto {
         id: item.id,
         content_type: item.content_type,
         text_content: item.text_content,
         image_thumb,
         source_app: item.source_app,
+        source_icon,
         created_at: item.created_at,
         is_pinned: item.is_pinned,
         usage_count: item.usage_count,
@@ -309,7 +578,7 @@ fn get_history(
 ) -> Result<Vec<ClipboardDto>, String> {
     let db_path = &state.db_path;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
-    let mut sql = String::from("SELECT id, content_type, text_content, image_data, source_app, created_at, is_pinned, usage_count FROM clipboard_items WHERE 1=1");
+    let mut sql = String::from("SELECT id, content_type, text_content, image_data, source_app, source_path, source_icon, created_at, is_pinned, usage_count FROM clipboard_items WHERE 1=1");
     let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
     if let Some(q) = query.clone() {
@@ -332,41 +601,32 @@ fn get_history(
     }
     if let Some(tf) = time_filter {
         let now = Local::now();
+        let today_local = now.date_naive();
+        let today_start = Local
+            .from_local_datetime(&today_local.and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+            .timestamp_millis();
+        let yesterday_start = Local
+            .from_local_datetime(&(today_local - ChronoDuration::days(1)).and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+            .timestamp_millis();
         match tf.as_str() {
             "today" => {
-                let start = now
-                    .date_naive()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc()
-                    .timestamp_millis();
                 sql.push_str(" AND created_at >= ?");
-                params_vec.push(Box::new(start));
+                params_vec.push(Box::new(today_start));
             }
             "yesterday" => {
-                let start = (now.date_naive() - ChronoDuration::days(1))
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc()
-                    .timestamp_millis();
-                let end = now
-                    .date_naive()
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc()
-                    .timestamp_millis();
                 sql.push_str(" AND created_at >= ? AND created_at < ?");
-                params_vec.push(Box::new(start));
-                params_vec.push(Box::new(end));
+                params_vec.push(Box::new(yesterday_start));
+                params_vec.push(Box::new(today_start));
             }
             "earlier" => {
-                let cutoff = (now.date_naive() - ChronoDuration::days(1))
-                    .and_hms_opt(0, 0, 0)
-                    .unwrap()
-                    .and_utc()
-                    .timestamp_millis();
                 sql.push_str(" AND created_at < ?");
-                params_vec.push(Box::new(cutoff));
+                params_vec.push(Box::new(yesterday_start));
             }
             _ => {}
         }
@@ -385,9 +645,11 @@ fn get_history(
             text_content: row.get(2).map_err(|e| e.to_string())?,
             image_data: row.get(3).map_err(|e| e.to_string())?,
             source_app: row.get(4).map_err(|e| e.to_string())?,
-            created_at: row.get(5).map_err(|e| e.to_string())?,
-            is_pinned: row.get::<_, i32>(6).map_err(|e| e.to_string())? != 0,
-            usage_count: row.get(7).map_err(|e| e.to_string())?,
+            source_path: row.get(5).map_err(|e| e.to_string())?,
+            source_icon: row.get(6).map_err(|e| e.to_string())?,
+            created_at: row.get(7).map_err(|e| e.to_string())?,
+            is_pinned: row.get::<_, i32>(8).map_err(|e| e.to_string())? != 0,
+            usage_count: row.get(9).map_err(|e| e.to_string())?,
         };
         result.push(to_dto(item));
     }
@@ -418,7 +680,7 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
     let conn = Connection::open(&state.db_path).map_err(|e| e.to_string())?;
     let item: ClipboardItem = conn
         .query_row(
-            "SELECT id, content_type, text_content, image_data, source_app, created_at, is_pinned, usage_count FROM clipboard_items WHERE id = ?1",
+            "SELECT id, content_type, text_content, image_data, source_app, source_path, source_icon, created_at, is_pinned, usage_count FROM clipboard_items WHERE id = ?1",
             params![id],
             |row| {
                 Ok(ClipboardItem {
@@ -427,9 +689,11 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
                     text_content: row.get(2)?,
                     image_data: row.get(3)?,
                     source_app: row.get(4)?,
-                    created_at: row.get(5)?,
-                    is_pinned: row.get::<_, i32>(6)? != 0,
-                    usage_count: row.get(7)?,
+                    source_path: row.get(5)?,
+                    source_icon: row.get(6)?,
+                    created_at: row.get(7)?,
+                    is_pinned: row.get::<_, i32>(8)? != 0,
+                    usage_count: row.get(9)?,
                 })
             },
         )

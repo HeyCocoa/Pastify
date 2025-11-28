@@ -74,8 +74,9 @@ const HistoryList: React.FC<Props> = ({ height }) => {
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => 92,
+    estimateSize: () => 80,
     overscan: 6,
+    measureElement: React.useCallback((el: Element | null) => el?.getBoundingClientRect().height || 0, []),
   });
 
   React.useEffect(() => {
@@ -109,6 +110,7 @@ const HistoryList: React.FC<Props> = ({ height }) => {
             return (
               <div
                 key={virtualRow.key}
+                ref={rowVirtualizer.measureElement}
                 style={{
                   position: 'absolute',
                   top: virtualRow.start,
@@ -134,13 +136,14 @@ const HistoryList: React.FC<Props> = ({ height }) => {
           return (
             <div
               key={virtualRow.key}
+              ref={rowVirtualizer.measureElement}
               style={{
                 position: 'absolute',
                 top: virtualRow.start,
                 left: 0,
                 width: '100%',
                 height: virtualRow.size,
-                padding: '10px 14px',
+                padding: '8px 12px',
               }}
               className="fade-in"
             >
@@ -155,7 +158,7 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                       ? '#f8fafc'
                       : '#fff',
                   boxShadow: isActive ? '0 8px 20px rgba(124,58,237,0.12)' : 'none',
-                  padding: '10px',
+                  padding: '9px',
                   display: 'flex',
                   gap: '12px',
                 }}
@@ -174,9 +177,18 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                     placeItems: 'center',
                     fontWeight: 700,
                     textTransform: 'uppercase',
+                    overflow: 'hidden',
                   }}
                 >
-                  {(entry.source_app || '?').slice(0, 1)}
+                  {entry.source_icon ? (
+                    <img
+                      src={entry.source_icon}
+                      alt={entry.source_app || 'app'}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  ) : (
+                    (entry.source_app || '?').slice(0, 1)
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
