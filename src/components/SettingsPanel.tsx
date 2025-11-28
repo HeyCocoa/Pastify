@@ -6,8 +6,8 @@ const SettingsPanel: React.FC = () => {
   if (!settings) return null;
 
   return (
-    <div style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 14, background: '#fff', width: 320 }}>
-      <div style={{ fontWeight: 700, marginBottom: 10 }}>设置</div>
+    <div style={{ border: 'none', borderRadius: 'var(--radius)', padding: 14, background: '#fff', width: 320 }}>
+      <div style={{ marginBottom: 10 }}>设置</div>
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
         <span style={{ color: 'var(--muted)', fontSize: 13 }}>全局快捷键</span>
         <input
@@ -27,14 +27,9 @@ const SettingsPanel: React.FC = () => {
           style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)' }}
         />
       </label>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        <input
-          type="checkbox"
-          checked={settings.record_images}
-          onChange={(e) => updateSettings({ record_images: e.target.checked })}
-        />
-        <span>记录图片</span>
-      </label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, color: 'var(--muted)', fontSize: 13 }}>
+        图片记录默认开启
+      </div>
     </div>
   );
 };

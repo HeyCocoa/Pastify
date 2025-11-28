@@ -116,7 +116,7 @@ export const useClipboardStore = create<State>((set, get) => ({
   },
   async loadSettings() {
     const settings: Settings = await invoke('get_settings');
-    set({ settings });
+    set({ settings: { ...settings, record_images: true } });
   },
   async updateSettings(partial) {
     const current = get().settings ?? {
@@ -125,7 +125,7 @@ export const useClipboardStore = create<State>((set, get) => ({
       hotkey: 'Ctrl+Shift+V',
       blacklist: [],
     };
-    const merged = { ...current, ...partial };
+    const merged = { ...current, ...partial, record_images: true };
     const saved: Settings = await invoke('update_settings', { settings: merged });
     set({ settings: saved });
   },

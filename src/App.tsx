@@ -1,8 +1,9 @@
 import React from 'react';
 import SearchBar from './components/SearchBar';
 import HistoryList from './components/HistoryList';
-import SettingsPanel from './components/SettingsPanel';
+import PreviewModal from './components/PreviewModal';
 import { useClipboardStore } from './store/clipboardStore';
+import { ClipboardEntry } from './types';
 import { appWindow } from '@tauri-apps/api/window';
 
 const App: React.FC = () => {
@@ -14,10 +15,8 @@ const App: React.FC = () => {
     togglePin,
     loadSettings,
     entries,
-    selectedIndex,
-    hoveredIndex,
-    ready,
   } = useClipboardStore();
+  const [previewEntry, setPreviewEntry] = React.useState<ClipboardEntry | null>(null);
 
   React.useEffect(() => {
     loadSettings();
@@ -46,15 +45,34 @@ const App: React.FC = () => {
         e.preventDefault();
         togglePin();
       } else if (e.key === 'Escape') {
+        if (previewEntry) {
+          e.preventDefault();
+          setPreviewEntry(null);
+          return;
+        }
         appWindow.hide();
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [moveSelection, pasteSelected, deleteSelected, togglePin]);
+  }, [moveSelection, pasteSelected, deleteSelected, togglePin, previewEntry]);
 
-  const active = entries[selectedIndex];
-  const hovered = hoveredIndex !== undefined ? entries[hoveredIndex] : undefined;
+  React.useEffect(() => {
+    if (!previewEntry) return;
+    const latest = entries.find((e) => e.id === previewEntry.id);
+    if (!latest) {
+      setPreviewEntry(null);
+      return;
+    }
+    if (
+      latest.text_content !== previewEntry.text_content ||
+      latest.image_thumb !== previewEntry.image_thumb ||
+      latest.is_pinned !== previewEntry.is_pinned ||
+      latest.usage_count !== previewEntry.usage_count
+    ) {
+      setPreviewEntry(latest);
+    }
+  }, [entries, previewEntry]);
 
   return (
     <div
@@ -63,43 +81,15 @@ const App: React.FC = () => {
         padding: '18px',
         background: 'var(--bg)',
         display: 'grid',
-        gridTemplateColumns: '1fr 320px',
+        gridTemplateColumns: '1fr',
         gap: 16,
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <SearchBar />
-        <HistoryList height={window.innerHeight - 120} />
+        <HistoryList height={window.innerHeight - 120} onEntryClick={(entry) => setPreviewEntry(entry)} />
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <SettingsPanel />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>当前选中</div>
-            {active ? (
-              <>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>{(active.text_content || '[图片]').slice(0, 80)}</div>
-                <div style={{ color: 'var(--muted)', fontSize: 13 }}>来源：{active.source_app || '未知'}</div>
-              </>
-            ) : ready ? (
-              <div style={{ color: 'var(--muted)' }}>暂无数据</div>
-            ) : (
-              <div style={{ color: 'var(--muted)' }}>加载中…</div>
-            )}
-          </div>
-          <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>预览</div>
-            {hovered ? (
-              <>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>{(hovered.text_content || '[图片]').slice(0, 80)}</div>
-                <div style={{ color: 'var(--muted)', fontSize: 13 }}>来源：{hovered.source_app || '未知'}</div>
-              </>
-            ) : (
-              <div style={{ color: 'var(--muted)' }}>悬停列表项以预览</div>
-            )}
-          </div>
-        </div>
-      </div>
+      {previewEntry && <PreviewModal entry={previewEntry} onClose={() => setPreviewEntry(null)} />}
     </div>
   );
 };

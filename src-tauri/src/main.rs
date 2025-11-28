@@ -154,7 +154,13 @@ fn load_settings(db_path: &PathBuf) -> Result<Settings, AppError> {
         [],
         |row| row.get(0),
     )?;
-    Ok(serde_json::from_str(&json).unwrap_or_else(|_| SETTINGS_DEFAULT.clone()))
+    let mut settings: Settings = serde_json::from_str(&json).unwrap_or_else(|_| SETTINGS_DEFAULT.clone());
+    // 图片记录始终开启
+    if !settings.record_images {
+        settings.record_images = true;
+        save_settings(db_path, &settings)?;
+    }
+    Ok(settings)
 }
 
 fn save_settings(db_path: &PathBuf, settings: &Settings) -> Result<(), AppError> {
@@ -802,10 +808,12 @@ fn get_settings(state: State<AppState>) -> Result<Settings, String> {
 
 #[tauri::command]
 fn update_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> Result<Settings, String> {
-    save_settings(&state.db_path, &settings).map_err(|e| e.to_string())?;
-    *state.settings.lock() = settings.clone();
-    register_hotkey(&app, &settings.hotkey)?;
-    Ok(settings)
+    let mut normalized = settings;
+    normalized.record_images = true;
+    save_settings(&state.db_path, &normalized).map_err(|e| e.to_string())?;
+    *state.settings.lock() = normalized.clone();
+    register_hotkey(&app, &normalized.hotkey)?;
+    Ok(normalized)
 }
 
 fn spawn_clipboard_watcher(app: AppHandle, state: AppState) {

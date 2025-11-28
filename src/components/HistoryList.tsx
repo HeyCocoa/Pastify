@@ -51,9 +51,10 @@ const highlight = (text: string, query: string) => {
 
 interface Props {
   height: number;
+  onEntryClick?: (entry: ClipboardEntry, index: number) => void;
 }
 
-const HistoryList: React.FC<Props> = ({ height }) => {
+const HistoryList: React.FC<Props> = ({ height, onEntryClick }) => {
   const { entries, selectedIndex, hoveredIndex, query, moveSelection, setHovered } = useClipboardStore();
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -120,7 +121,6 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                   padding: '0 12px',
                   display: 'flex',
                   alignItems: 'center',
-                  fontWeight: 600,
                   color: '#4b5563',
                   background: '#f5f5f5',
                   borderBottom: '1px solid #e5e7eb',
@@ -133,6 +133,10 @@ const HistoryList: React.FC<Props> = ({ height }) => {
           const { entry, entryIndex } = row as RowItem;
           const isActive = entryIndex === selectedIndex;
           const isHover = entryIndex === hoveredIndex;
+          const handleClick = () => {
+            moveSelection(entryIndex - selectedIndex);
+            onEntryClick?.(entry, entryIndex);
+          };
           return (
             <div
               key={virtualRow.key}
@@ -148,6 +152,17 @@ const HistoryList: React.FC<Props> = ({ height }) => {
               className="fade-in"
             >
               <div
+                onClick={handleClick}
+                onMouseEnter={() => setHovered(entryIndex)}
+                onMouseLeave={() => setHovered(undefined)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleClick();
+                  }
+                }}
                 style={{
                   height: '100%',
                   borderRadius: '8px',
@@ -161,10 +176,10 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                   padding: '9px',
                   display: 'flex',
                   gap: '12px',
+                  cursor: 'pointer',
+                  transition: 'transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease',
+                  transform: isHover ? 'translateY(-1px)' : 'none',
                 }}
-                onClick={() => moveSelection(entryIndex - selectedIndex)}
-                onMouseEnter={() => setHovered(entryIndex)}
-                onMouseLeave={() => setHovered(undefined)}
               >
                 <div
                   style={{
@@ -175,7 +190,6 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                     color: '#4338ca',
                     display: 'grid',
                     placeItems: 'center',
-                    fontWeight: 700,
                     textTransform: 'uppercase',
                     overflow: 'hidden',
                   }}
@@ -191,7 +205,7 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                   )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {highlight(summarize(entry), query)}
                   </div>
                   <div style={{ marginTop: 6, fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 10, alignItems: 'center' }}>
