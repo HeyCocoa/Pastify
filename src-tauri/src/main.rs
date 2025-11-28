@@ -800,11 +800,7 @@ fn copy_entry(state: State<AppState>, id: i64) -> Result<(), String> {
 
 unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
     // plain=true 使用 Ctrl+Shift+V（常见的纯文本粘贴），否则使用 Ctrl+V
-    let (modifier2, use_shift) = if plain {
-        (VK_SHIFT, true)
-    } else {
-        (VK_MENU, false) // placeholder, not pressed when use_shift=false
-    };
+    let use_shift = plain;
 
     let mut inputs: Vec<INPUT> = Vec::with_capacity(6);
 
@@ -828,7 +824,7 @@ unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(modifier2.0 as u16),
+                    wVk: VIRTUAL_KEY(VK_SHIFT.0 as u16),
                     wScan: 0,
                     dwFlags: KEYBD_EVENT_FLAGS(0),
                     time: 0,
@@ -871,7 +867,7 @@ unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(modifier2.0 as u16),
+                    wVk: VIRTUAL_KEY(VK_SHIFT.0 as u16),
                     wScan: 0,
                     dwFlags: KEYEVENTF_KEYUP,
                     time: 0,
