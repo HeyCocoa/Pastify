@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/v1/config",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:5173",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "Pastify",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "identifier": "com.pastify.app",
+      "active": true,
+      "icon": ["icons/icon.ico", "icons/icon.png"]
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Pastify",
+        "width": 1100,
+        "height": 700,
+        "decorations": false,
+        "visible": true,
+        "resizable": true,
+        "transparent": false,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "allowlist": {
+      "all": true
+    }
+  }
+}
