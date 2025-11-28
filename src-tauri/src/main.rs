@@ -714,11 +714,14 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
     SKIP_UNTIL_MS.store(now_ms + 1200, Ordering::SeqCst);
     if item.content_type == "text" {
         let text = item.text_content.unwrap_or_default();
-        if plain {
-            clipboard.set_text(text.clone()).map_err(|e| e.to_string())?;
+        let final_text = if plain {
+            clean_plain_text(&text)
         } else {
-            clipboard.set_text(text.clone()).map_err(|e| e.to_string())?;
-        }
+            text.clone()
+        };
+        clipboard
+            .set_text(final_text)
+            .map_err(|e| e.to_string())?;
     } else if let Some(img_bytes) = item.image_data {
         let png = image::load_from_memory(&img_bytes).map_err(|e| e.to_string())?;
         let rgba = png.to_rgba8();
@@ -741,6 +744,53 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn clean_plain_text(input: &str) -> String {
+    // 轻量“纯文本”处理：去掉常见 Markdown 强调/列表/引用标记与多余空格
+    let mut result = String::with_capacity(input.len());
+    for (idx, line) in input.lines().enumerate() {
+        let mut l = line.trim_start();
+
+        // 标题 #
+        while let Some(rest) = l.strip_prefix('#') {
+            l = rest.trim_start();
+        }
+
+        // 列表、引用前缀
+        for prefix in ["- ", "* ", "+ ", "> ", "• ", "– "] {
+            if let Some(rest) = l.strip_prefix(prefix) {
+                l = rest.trim_start();
+                break;
+            }
+        }
+        if let Some(stripped) = l
+            .trim_start()
+            .strip_prefix(|c: char| c.is_ascii_digit())
+            .and_then(|s| s.strip_prefix('.'))
+        {
+            l = stripped.trim_start();
+        }
+
+        // 去掉强调/代码符号
+        let mut cleaned = l
+            .replace("**", "")
+            .replace("__", "")
+            .replace('*', "")
+            .replace('_', "")
+            .replace('`', "");
+
+        // 合并多空格
+        while cleaned.contains("  ") {
+            cleaned = cleaned.replace("  ", " ");
+        }
+
+        if idx > 0 {
+            result.push('\n');
+        }
+        result.push_str(cleaned.trim_end());
+    }
+    result
 }
 
 #[tauri::command]
