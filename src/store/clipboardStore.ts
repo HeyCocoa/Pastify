@@ -151,7 +151,7 @@ export const useClipboardStore = create<State>((set, get) => ({
       hotkey: 'Ctrl+Shift+V',
       blacklist: [],
     };
-    const merged = { ...current, ...partial, record_images: true };
+    const merged = { ...current, ...partial, record_images: true } as Settings;
     const saved: Settings = await invoke('update_settings', { settings: merged });
     set({ settings: saved });
   },

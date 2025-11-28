@@ -17,6 +17,13 @@ const App: React.FC = () => {
     entries,
   } = useClipboardStore();
   const [previewEntry, setPreviewEntry] = React.useState<ClipboardEntry | null>(null);
+  const [viewportHeight, setViewportHeight] = React.useState(() => window.innerHeight);
+
+  React.useEffect(() => {
+    const onResize = () => setViewportHeight(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   React.useEffect(() => {
     loadSettings();
@@ -74,20 +81,52 @@ const App: React.FC = () => {
     }
   }, [entries, previewEntry]);
 
+  const panelHeight = Math.max(520, Math.min(580, viewportHeight - 80));
+  const listHeight = Math.max(280, panelHeight - 72 - 56 - 40 - 42); // toolbar + filters + status + paddings/gaps
+
   return (
     <div
       style={{
         height: '100vh',
-        padding: '18px',
+        width: '100vw',
         background: 'var(--bg)',
-        display: 'grid',
-        gridTemplateColumns: '1fr',
-        gap: 16,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '28px 32px',
       }}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div
+        style={{
+          width: 'min(960px, 94vw)',
+          height: `${panelHeight}px`,
+          background: 'var(--panel)',
+          borderRadius: 'var(--radius-lg)',
+          boxShadow: 'var(--shadow-panel)',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '18px 20px 14px',
+          gap: 12,
+          position: 'relative',
+        }}
+      >
         <SearchBar />
-        <HistoryList height={window.innerHeight - 120} onEntryClick={(entry) => setPreviewEntry(entry)} />
+        <HistoryList height={listHeight} onEntryClick={(entry) => setPreviewEntry(entry)} />
+        <div
+          style={{
+            height: 34,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 6px',
+            color: 'var(--text-sub)',
+            fontSize: 12,
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          <span>{`共 ${entries.length} 条记录 · 单击预览`}</span>
+          <span>Enter 粘贴</span>
+        </div>
       </div>
       {previewEntry && <PreviewModal entry={previewEntry} onClose={() => setPreviewEntry(null)} />}
     </div>

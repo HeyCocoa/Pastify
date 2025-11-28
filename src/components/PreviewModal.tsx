@@ -20,7 +20,7 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15,23,42,0.45)',
+        background: 'rgba(15,23,42,0.25)',
         backdropFilter: 'blur(4px)',
         display: 'flex',
         alignItems: 'center',
@@ -37,7 +37,7 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
           background: '#fff',
           borderRadius: 18,
           border: '1px solid #e5e7eb',
-          boxShadow: '0 18px 50px rgba(15, 23, 42, 0.18)',
+          boxShadow: 'var(--shadow-elevated)',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
@@ -51,6 +51,7 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
             justifyContent: 'space-between',
             padding: '16px 18px',
             borderBottom: '1px solid #f1f5f9',
+            background: '#f8fafc',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
@@ -65,6 +66,7 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
                 placeItems: 'center',
                 textTransform: 'uppercase',
                 overflow: 'hidden',
+                border: '1px solid #e5e7eb',
                 flexShrink: 0,
               }}
             >
@@ -101,15 +103,20 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
           </div>
           <button
             onClick={onClose}
+            aria-label="关闭预览"
             style={{
-              border: '1px solid #e5e7eb',
-              background: '#f8fafc',
-              borderRadius: 10,
-              padding: '8px 12px',
+              width: 34,
+              height: 34,
+              borderRadius: 12,
+              border: '1px solid var(--border)',
+              background: '#fff',
+              display: 'grid',
+              placeItems: 'center',
               cursor: 'pointer',
+              boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
             }}
           >
-            关闭
+            ×
           </button>
         </div>
         <div
@@ -124,16 +131,21 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
           }}
         >
           {hasText && (
-            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: 14 }}>
-              <div style={{ fontSize: 13, color: '#374151', marginBottom: 10 }}>文本内容</div>
+            <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', padding: 16, boxShadow: 'var(--shadow-card)' }}>
+              <div style={{ fontSize: 13, color: '#374151', marginBottom: 10, fontWeight: 600 }}>文本内容</div>
               <div
                 style={{
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
                   fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                  lineHeight: 1.6,
+                  lineHeight: 1.65,
                   fontSize: 13.5,
                   color: '#0f172a',
+                  padding: '12px',
+                  background: '#f3f4f6',
+                  borderRadius: 12,
+                  maxHeight: '60vh',
+                  overflow: 'auto',
                 }}
               >
                 {entry.text_content}
@@ -141,13 +153,13 @@ const PreviewModal: React.FC<Props> = ({ entry, onClose }) => {
             </div>
           )}
           {hasImage && (
-            <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: 14 }}>
-              <div style={{ fontSize: 13, color: '#374151', marginBottom: 10 }}>图片预览</div>
+            <div style={{ background: '#fff', borderRadius: 16, border: '1px solid #e5e7eb', padding: 16, boxShadow: 'var(--shadow-card)' }}>
+              <div style={{ fontSize: 13, color: '#374151', marginBottom: 10, fontWeight: 600 }}>图片预览</div>
               <div
                 style={{
                   border: '1px solid #e5e7eb',
                   borderRadius: 12,
-                  padding: 8,
+                  padding: 10,
                   background: '#f9fafb',
                   display: 'grid',
                   placeItems: 'center',
