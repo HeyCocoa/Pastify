@@ -54,7 +54,7 @@ interface Props {
 }
 
 const HistoryList: React.FC<Props> = ({ height }) => {
-  const { entries, selectedIndex, query, moveSelection } = useClipboardStore();
+  const { entries, selectedIndex, hoveredIndex, query, moveSelection, setHovered } = useClipboardStore();
   const parentRef = useRef<HTMLDivElement>(null);
 
   const rows = useMemo(() => {
@@ -130,6 +130,7 @@ const HistoryList: React.FC<Props> = ({ height }) => {
           }
           const { entry, entryIndex } = row as RowItem;
           const isActive = entryIndex === selectedIndex;
+          const isHover = entryIndex === hoveredIndex;
           return (
             <div
               key={virtualRow.key}
@@ -148,13 +149,19 @@ const HistoryList: React.FC<Props> = ({ height }) => {
                   height: '100%',
                   borderRadius: '8px',
                   border: isActive ? '1.5px solid var(--accent)' : '1px solid var(--border)',
-                  background: isActive ? 'var(--accent-soft)' : '#fff',
+                  background: isActive
+                    ? 'var(--accent-soft)'
+                    : isHover
+                      ? '#f8fafc'
+                      : '#fff',
                   boxShadow: isActive ? '0 8px 20px rgba(124,58,237,0.12)' : 'none',
                   padding: '10px',
                   display: 'flex',
                   gap: '12px',
                 }}
-                onMouseEnter={() => moveSelection(entryIndex - selectedIndex)}
+                onClick={() => moveSelection(entryIndex - selectedIndex)}
+                onMouseEnter={() => setHovered(entryIndex)}
+                onMouseLeave={() => setHovered(undefined)}
               >
                 <div
                   style={{

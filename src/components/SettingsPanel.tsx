@@ -35,14 +35,6 @@ const SettingsPanel: React.FC = () => {
         />
         <span>记录图片</span>
       </label>
-      <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: 'var(--muted)', fontSize: 13 }}>黑名单应用（逗号分隔）</span>
-        <input
-          value={settings.blacklist.join(',')}
-          onChange={(e) => updateSettings({ blacklist: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-          style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)' }}
-        />
-      </label>
     </div>
   );
 };

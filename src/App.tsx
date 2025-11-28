@@ -15,6 +15,7 @@ const App: React.FC = () => {
     loadSettings,
     entries,
     selectedIndex,
+    hoveredIndex,
     ready,
   } = useClipboardStore();
 
@@ -33,7 +34,11 @@ const App: React.FC = () => {
         moveSelection(-1);
       } else if (e.key === 'Enter' && !e.isComposing) {
         e.preventDefault();
-        pasteSelected(e.ctrlKey || e.metaKey).then(() => appWindow.hide());
+        const plain = e.ctrlKey || e.metaKey;
+        appWindow.hide().then(() => {
+          // give focus a beat to return to上一个应用，再执行模拟粘贴
+          window.setTimeout(() => pasteSelected(plain), 80);
+        });
       } else if (e.key === 'Delete') {
         e.preventDefault();
         deleteSelected();
@@ -49,6 +54,7 @@ const App: React.FC = () => {
   }, [moveSelection, pasteSelected, deleteSelected, togglePin]);
 
   const active = entries[selectedIndex];
+  const hovered = hoveredIndex !== undefined ? entries[hoveredIndex] : undefined;
 
   return (
     <div
@@ -67,18 +73,31 @@ const App: React.FC = () => {
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         <SettingsPanel />
-        <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>当前选中</div>
-          {active ? (
-            <>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>{(active.text_content || '[图片]').slice(0, 80)}</div>
-              <div style={{ color: 'var(--muted)', fontSize: 13 }}>来源：{active.source_app || '未知'}</div>
-            </>
-          ) : ready ? (
-            <div style={{ color: 'var(--muted)' }}>暂无数据</div>
-          ) : (
-            <div style={{ color: 'var(--muted)' }}>加载中…</div>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>当前选中</div>
+            {active ? (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>{(active.text_content || '[图片]').slice(0, 80)}</div>
+                <div style={{ color: 'var(--muted)', fontSize: 13 }}>来源：{active.source_app || '未知'}</div>
+              </>
+            ) : ready ? (
+              <div style={{ color: 'var(--muted)' }}>暂无数据</div>
+            ) : (
+              <div style={{ color: 'var(--muted)' }}>加载中…</div>
+            )}
+          </div>
+          <div style={{ padding: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: '#fff' }}>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>预览</div>
+            {hovered ? (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>{(hovered.text_content || '[图片]').slice(0, 80)}</div>
+                <div style={{ color: 'var(--muted)', fontSize: 13 }}>来源：{hovered.source_app || '未知'}</div>
+              </>
+            ) : (
+              <div style={{ color: 'var(--muted)' }}>悬停列表项以预览</div>
+            )}
+          </div>
         </div>
       </div>
     </div>

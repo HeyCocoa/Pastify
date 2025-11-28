@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{path::PathBuf, sync::Arc, thread, time::Duration};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use arboard::Clipboard;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -27,6 +29,8 @@ static SETTINGS_DEFAULT: Lazy<Settings> = Lazy::new(|| Settings {
     hotkey: "Ctrl+Shift+V".to_string(),
     blacklist: vec![],
 });
+
+static SKIP_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Error)]
 enum AppError {
@@ -432,6 +436,12 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
         .map_err(|e| e.to_string())?;
 
     let mut clipboard = Clipboard::new().map_err(|e| e.to_string())?;
+    // Avoid recording this paste as a new history entry in watcher
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64;
+    SKIP_UNTIL_MS.store(now_ms + 1200, Ordering::SeqCst);
     if item.content_type == "text" {
         let text = item.text_content.unwrap_or_default();
         if plain {
@@ -527,9 +537,10 @@ fn get_settings(state: State<AppState>) -> Result<Settings, String> {
 }
 
 #[tauri::command]
-fn update_settings(state: State<AppState>, settings: Settings) -> Result<Settings, String> {
+fn update_settings(app: AppHandle, state: State<AppState>, settings: Settings) -> Result<Settings, String> {
     save_settings(&state.db_path, &settings).map_err(|e| e.to_string())?;
     *state.settings.lock() = settings.clone();
+    register_hotkey(&app, &settings.hotkey)?;
     Ok(settings)
 }
 
@@ -545,6 +556,13 @@ fn spawn_clipboard_watcher(app: AppHandle, state: AppState) {
                 continue;
             }
             last_seq = seq;
+            let now_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            if now_ms < SKIP_UNTIL_MS.load(Ordering::SeqCst) {
+                continue;
+            }
             let snapshot = AppState {
                 db_path: db_path.clone(),
                 settings: settings.clone(),
@@ -562,16 +580,19 @@ fn spawn_clipboard_watcher(app: AppHandle, state: AppState) {
     });
 }
 
-fn register_hotkey(app: &AppHandle, hotkey: &str) {
+fn register_hotkey(app: &AppHandle, hotkey: &str) -> Result<(), String> {
     let mut gsm = app.global_shortcut_manager();
+    let _ = gsm.unregister_all();
     let hk = if hotkey.is_empty() { "Ctrl+Shift+V" } else { hotkey };
     let app_handle = app.clone();
-    let _ = gsm.register(hk, move || {
-        if let Some(win) = app_handle.get_window("main") {
-            let _ = win.show();
-            let _ = win.set_focus();
-        }
-    });
+    gsm
+        .register(hk, move || {
+            if let Some(win) = app_handle.get_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        })
+        .map_err(|e| e.to_string())
 }
 
 fn main() {
@@ -591,7 +612,7 @@ fn main() {
                 settings: Arc::new(Mutex::new(settings.clone())),
             };
             app.manage(state);
-            register_hotkey(&app.app_handle(), &settings.hotkey);
+            register_hotkey(&app.app_handle(), &settings.hotkey).ok();
             if let Some(state) = app.try_state::<AppState>() {
                 spawn_clipboard_watcher(app.app_handle(), state.inner().clone());
             }

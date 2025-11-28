@@ -7,6 +7,7 @@ import { subDays, startOfDay } from 'date-fns';
 interface State {
   entries: ClipboardEntry[];
   selectedIndex: number;
+  hoveredIndex?: number;
   query: string;
   typeFilter: TypeFilter;
   timeFilter: TimeFilter;
@@ -21,6 +22,7 @@ interface State {
   setTimeFilter: (t: TimeFilter) => void;
   setSourceFilter: (s?: string) => void;
   moveSelection: (delta: number) => void;
+  setHovered: (idx?: number) => void;
   deleteSelected: () => Promise<void>;
   pasteSelected: (plain: boolean) => Promise<void>;
   togglePin: () => Promise<void>;
@@ -48,6 +50,7 @@ const withinTime = (timestamp: number, filter: TimeFilter) => {
 export const useClipboardStore = create<State>((set, get) => ({
   entries: [],
   selectedIndex: 0,
+  hoveredIndex: undefined,
   query: '',
   typeFilter: 'all',
   timeFilter: 'all',
@@ -64,7 +67,7 @@ export const useClipboardStore = create<State>((set, get) => ({
         timeFilter,
         sourceFilter,
       });
-      set({ entries: rows, loading: false, ready: true, selectedIndex: 0 });
+      set({ entries: rows, loading: false, ready: true, selectedIndex: 0, hoveredIndex: undefined });
     } catch (error: any) {
       set({ error: error?.message ?? '加载失败', loading: false, ready: true });
     }
@@ -82,11 +85,14 @@ export const useClipboardStore = create<State>((set, get) => ({
   setSourceFilter(s) {
     set({ sourceFilter: s, selectedIndex: 0 });
   },
+  setHovered(idx) {
+    set({ hoveredIndex: idx });
+  },
   moveSelection(delta) {
     const { entries, selectedIndex } = get();
     if (!entries.length) return;
     const next = Math.min(entries.length - 1, Math.max(0, selectedIndex + delta));
-    set({ selectedIndex: next });
+    set({ selectedIndex: next, hoveredIndex: undefined });
   },
   async deleteSelected() {
     const { entries, selectedIndex, fetchHistory } = get();
@@ -129,5 +135,5 @@ export const useClipboardStore = create<State>((set, get) => ({
 listen<ClipboardEntry>('clipboard://new', (event) => {
   const entry = event.payload;
   const { entries } = useClipboardStore.getState();
-  useClipboardStore.setState({ entries: [entry, ...entries], selectedIndex: 0 });
+useClipboardStore.setState({ entries: [entry, ...entries], selectedIndex: 0, hoveredIndex: undefined });
 });
