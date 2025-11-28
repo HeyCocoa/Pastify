@@ -798,12 +798,11 @@ fn copy_entry(state: State<AppState>, id: i64) -> Result<(), String> {
     Ok(())
 }
 
-unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
-    // 纯文本：优先尝试 Ctrl+Shift+V，若失败再用 Ctrl+V；普通：直接 Ctrl+V
-    fn build_inputs(use_shift: bool) -> Vec<INPUT> {
-        let mut inputs: Vec<INPUT> = Vec::with_capacity(6);
+unsafe fn simulate_paste(_plain: bool) -> Result<(), AppError> {
+    // 统一发送 Ctrl+V，由于我们已写入纯文本到剪贴板，目标应用会按文本粘贴
+    let inputs = [
         // Ctrl down
-        inputs.push(INPUT {
+        INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
@@ -814,24 +813,9 @@ unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
                     dwExtraInfo: 0,
                 },
             },
-        });
-        // Shift down
-        if use_shift {
-            inputs.push(INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(VK_SHIFT.0 as u16),
-                        wScan: 0,
-                        dwFlags: KEYBD_EVENT_FLAGS(0),
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            });
-        }
+        },
         // V down
-        inputs.push(INPUT {
+        INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
@@ -842,9 +826,9 @@ unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
                     dwExtraInfo: 0,
                 },
             },
-        });
+        },
         // V up
-        inputs.push(INPUT {
+        INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
@@ -855,24 +839,9 @@ unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
                     dwExtraInfo: 0,
                 },
             },
-        });
-        // Shift up
-        if use_shift {
-            inputs.push(INPUT {
-                r#type: INPUT_KEYBOARD,
-                Anonymous: INPUT_0 {
-                    ki: KEYBDINPUT {
-                        wVk: VIRTUAL_KEY(VK_SHIFT.0 as u16),
-                        wScan: 0,
-                        dwFlags: KEYEVENTF_KEYUP,
-                        time: 0,
-                        dwExtraInfo: 0,
-                    },
-                },
-            });
-        }
+        },
         // Ctrl up
-        inputs.push(INPUT {
+        INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
@@ -883,20 +852,10 @@ unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
                     dwExtraInfo: 0,
                 },
             },
-        });
-        inputs
-    }
-
-    let combo_shift = build_inputs(plain);
-    let sent = SendInput(&combo_shift, std::mem::size_of::<INPUT>() as i32);
-    if sent == 0 && plain {
-        // 回落到 Ctrl+V，以兼容不支持 Ctrl+Shift+V 的应用
-        let combo_plain = build_inputs(false);
-        let fallback = SendInput(&combo_plain, std::mem::size_of::<INPUT>() as i32);
-        if fallback == 0 {
-            return Err(AppError::Other("发送粘贴快捷键失败".into()));
-        }
-    } else if sent == 0 {
+        },
+    ];
+    let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    if sent == 0 {
         return Err(AppError::Other("发送粘贴快捷键失败".into()));
     }
     Ok(())
