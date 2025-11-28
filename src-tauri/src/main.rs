@@ -20,7 +20,7 @@ use std::io;
 use std::io::Cursor;
 use thiserror::Error;
 use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
-use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, KEYBD_EVENT_FLAGS, VK_CONTROL, VK_V};
+use windows::Win32::UI::Input::KeyboardAndMouse::{SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY, KEYBD_EVENT_FLAGS, VK_CONTROL, VK_SHIFT, VK_V};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId, GetWindowTextW, GetWindowTextLengthW, HICON, ICONINFO};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_NAME_FORMAT, QueryFullProcessImageNameW};
@@ -732,7 +732,7 @@ fn paste_entry(state: State<AppState>, id: i64, plain: bool) -> Result<(), Strin
     }
 
     unsafe {
-        simulate_paste().map_err(|e| e.to_string())?;
+        simulate_paste(plain).map_err(|e| e.to_string())?;
     }
 
     conn.execute(
@@ -798,57 +798,103 @@ fn copy_entry(state: State<AppState>, id: i64) -> Result<(), String> {
     Ok(())
 }
 
-unsafe fn simulate_paste() -> Result<(), AppError> {
-    let inputs = [
-        INPUT {
+unsafe fn simulate_paste(plain: bool) -> Result<(), AppError> {
+    // plain=true 使用 Ctrl+Shift+V（常见的纯文本粘贴），否则使用 Ctrl+V
+    let (modifier2, use_shift) = if plain {
+        (VK_SHIFT, true)
+    } else {
+        (VK_MENU, false) // placeholder, not pressed when use_shift=false
+    };
+
+    let mut inputs: Vec<INPUT> = Vec::with_capacity(6);
+
+    // Ctrl down
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(VK_CONTROL.0 as u16),
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    });
+
+    // Shift down (only for plain)
+    if use_shift {
+        inputs.push(INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(VK_CONTROL.0 as u16),
+                    wVk: VIRTUAL_KEY(modifier2.0 as u16),
                     wScan: 0,
                     dwFlags: KEYBD_EVENT_FLAGS(0),
                     time: 0,
                     dwExtraInfo: 0,
                 },
             },
-        },
-        INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(VK_V.0 as u16),
-                    wScan: 0,
-                    dwFlags: KEYBD_EVENT_FLAGS(0),
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
+        });
+    }
+
+    // V down
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(VK_V.0 as u16),
+                wScan: 0,
+                dwFlags: KEYBD_EVENT_FLAGS(0),
+                time: 0,
+                dwExtraInfo: 0,
             },
         },
-        INPUT {
+    });
+    // V up
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(VK_V.0 as u16),
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    });
+
+    // Shift up (only for plain)
+    if use_shift {
+        inputs.push(INPUT {
             r#type: INPUT_KEYBOARD,
             Anonymous: INPUT_0 {
                 ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(VK_V.0 as u16),
+                    wVk: VIRTUAL_KEY(modifier2.0 as u16),
                     wScan: 0,
                     dwFlags: KEYEVENTF_KEYUP,
                     time: 0,
                     dwExtraInfo: 0,
                 },
             },
-        },
-        INPUT {
-            r#type: INPUT_KEYBOARD,
-            Anonymous: INPUT_0 {
-                ki: KEYBDINPUT {
-                    wVk: VIRTUAL_KEY(VK_CONTROL.0 as u16),
-                    wScan: 0,
-                    dwFlags: KEYEVENTF_KEYUP,
-                    time: 0,
-                    dwExtraInfo: 0,
-                },
+        });
+    }
+
+    // Ctrl up
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(VK_CONTROL.0 as u16),
+                wScan: 0,
+                dwFlags: KEYEVENTF_KEYUP,
+                time: 0,
+                dwExtraInfo: 0,
             },
         },
-    ];
+    });
+
     let sent = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     if sent == 0 {
         return Err(AppError::Other("发送粘贴快捷键失败".into()));
